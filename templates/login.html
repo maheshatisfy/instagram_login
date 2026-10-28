@@ -8,14 +8,40 @@
 </head>
 <body>
   <main class="wrap narrow">
-    <h1>Instagram API with Unified Login</h1>
-    <p class="muted">Log in with Instagram or Facebook. The app then reads the professional account on graph.facebook.com.</p>
-    {% with messages = get_flashed_messages() %}
-      {% for message in messages %}
-        <p class="error">{{ message }}</p>
-      {% endfor %}
-    {% endwith %}
-    <a class="button" href="{{ url_for('instagram_login') }}">Continue with Unified Login</a>
+    <section class="panel">
+      <p class="eyebrow">Unified Login</p>
+      <h1>Open a saved account, or connect a new one.</h1>
+      <p class="muted">The access token stays on this server. You only sign in with Meta again when that token expires or you remove the account.</p>
+      {% with messages = get_flashed_messages() %}
+        {% for message in messages %}
+          <p class="error">{{ message }}</p>
+        {% endfor %}
+      {% endwith %}
+      {% if saved %}
+        <h2>Saved accounts</h2>
+        <ul class="account-list">
+          {% for account in saved %}
+            <li>
+              <form method="post" action="{{ url_for('continue_account') }}">
+                <input type="hidden" name="ig_id" value="{{ account.ig_id }}">
+                <button type="submit" class="account-button">
+                  <span class="avatar">{{ (account.username or account.ig_id)[:1]|upper }}</span>
+                  <span>
+                    <strong>@{{ account.username or account.ig_id }}</strong>
+                    <small>Saved {{ account.updated_at }}</small>
+                  </span>
+                </button>
+              </form>
+              <form method="post" action="{{ url_for('forget') }}">
+                <input type="hidden" name="ig_id" value="{{ account.ig_id }}">
+                <button type="submit" class="text-button">Remove</button>
+              </form>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      <a class="button" href="{{ url_for('instagram_login') }}">Connect with Unified Login</a>
+    </section>
   </main>
 </body>
 </html>

@@ -8,14 +8,27 @@
 </head>
 <body>
   <main class="wrap narrow">
-    <h1>Choose an Instagram account</h1>
-    <p class="muted">This login granted more than one Instagram professional account.</p>
-    {% for ig_id in accounts %}
-      <form method="post" action="{{ url_for('choose_account') }}">
-        <input type="hidden" name="ig_id" value="{{ ig_id }}">
-        <button type="submit">{{ ig_id }}</button>
-      </form>
-    {% endfor %}
+    <section class="panel">
+      <p class="eyebrow">One token, several accounts</p>
+      <h1>Choose an Instagram account</h1>
+      <p class="muted">These accounts were shared in this login. The same token is already saved for each of them.</p>
+      <ul class="account-list">
+        {% for account in accounts %}
+          <li>
+            <form method="post" action="{{ url_for('choose_account') }}">
+              <input type="hidden" name="ig_id" value="{{ account.id }}">
+              <button type="submit" class="account-button">
+                <span class="avatar">{{ (account.username or account.id)[:1]|upper }}</span>
+                <span>
+                  <strong>@{{ account.username or account.id }}</strong>
+                  <small>{{ account.id }}</small>
+                </span>
+              </button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
   </main>
 </body>
 </html>

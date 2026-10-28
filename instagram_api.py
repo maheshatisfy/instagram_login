@@ -160,8 +160,11 @@ def instagram_account_ids(token):
         payload = _request("GET", url, token, params=params)
         for account in payload.get("data") or []:
             account_id = str((account or {}).get("id") or "").strip()
-            if account_id and account_id not in found:
-                found.append(account_id)
+            if account_id and account_id not in {item["id"] for item in found}:
+                found.append({
+                    "id": account_id,
+                    "username": (account or {}).get("username") or "",
+                })
         url = (payload.get("paging") or {}).get("next")
         params = None
     if not found:
@@ -171,6 +174,21 @@ def instagram_account_ids(token):
             "In the login dialog, share an Instagram professional account."
         )
     return found
+
+
+def client_business_id(token):
+    """Business id stored with the token so it can be reused later."""
+    _, _, _, _, base = _config()
+    try:
+        me = _request(
+            "GET",
+            f"{base}me",
+            token,
+            params={"fields": "client_business_id"},
+        )
+    except InstagramError:
+        return None
+    return me.get("client_business_id")
 
 
 def fetch_profile(token, instagram_id):

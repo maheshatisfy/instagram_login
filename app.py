@@ -1,5 +1,6 @@
 import os
 import secrets
+from datetime import timedelta
 
 from dotenv import load_dotenv
 from flask import (
@@ -15,11 +16,13 @@ from flask import (
 from instagram_api import (
     InstagramError,
     authorize_url,
+    client_business_id,
     exchange_code,
     fetch_media,
     fetch_profile,
     instagram_account_ids,
 )
+import token_store
 
 load_dotenv()
 
@@ -28,56 +31,107 @@ app.secret_key = os.getenv("SECRET_KEY") or "dev-only-change-me"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("COOKIE_SECURE", "0") == "1"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=60)
 
 
-def _token():
-    return session.get("access_token")
+def _open_account():
+    ig_id = session.get("ig_id")
+    if not ig_id:
+        return None
+    return token_store.get_account(ig_id)
+
+
+def _refresh_account(account, after=None):
+    token = account["access_token"]
+    ig_id = account["ig_id"]
+    profile = fetch_profile(token, ig_id)
+    media = {"items": [], "after": None}
+    media_error = None
+    try:
+        media = fetch_media(token, ig_id, after=after)
+    except InstagramError as exc:
+        media_error = str(exc)
+    token_store.save_snapshot(
+        ig_id,
+        profile,
+        media["items"],
+        media["after"],
+        media_error,
+    )
+    saved = token_store.get_account(ig_id)
+    return saved
 
 
 @app.get("/")
 def home():
-    if not _token():
-        return render_template("login.html")
-    ig_id = session.get("ig_id")
-    accounts = session.get("ig_accounts") or []
-    if not ig_id:
-        if len(accounts) > 1:
-            return render_template("accounts.html", accounts=accounts)
-        if len(accounts) == 1:
-            ig_id = accounts[0]
-            session["ig_id"] = ig_id
-        else:
-            flash("Login finished, but the token has no Instagram account id.")
-            return render_template("login.html")
-    try:
-        profile = fetch_profile(_token(), ig_id)
-    except InstagramError as exc:
-        flash(str(exc))
-        return render_template("login.html")
-    after = (request.args.get("after") or "").strip() or None
-    media = {"items": [], "after": None}
-    media_error = None
-    try:
-        media = fetch_media(_token(), ig_id, after=after)
-    except InstagramError as exc:
-        media_error = str(exc)
+    session.permanent = True
+    account = _open_account()
+    if not account:
+        pending = session.get("pending_accounts") or []
+        if len(pending) > 1:
+            return render_template("accounts.html", accounts=pending)
+        return render_template("login.html", saved=token_store.list_accounts())
+
+    profile = account.get("profile")
+    media = account.get("media")
+    media_error = account.get("media_error")
+    if not profile or media is None:
+        try:
+            account = _refresh_account(account)
+            profile = account.get("profile")
+            media = account.get("media") or []
+            media_error = account.get("media_error")
+        except InstagramError as exc:
+            flash(str(exc))
+            return render_template(
+                "login.html",
+                saved=token_store.list_accounts(),
+            )
     return render_template(
         "dashboard.html",
-        profile=profile,
-        media=media["items"],
-        next_after=media["after"],
+        profile=profile or {},
+        media=media or [],
+        next_after=account.get("media_after"),
         media_error=media_error,
+        saved_at=account.get("updated_at"),
     )
+
+
+@app.post("/continue")
+def continue_account():
+    ig_id = (request.form.get("ig_id") or "").strip()
+    if not token_store.get_account(ig_id):
+        flash("That saved login is no longer on this server.")
+        return redirect(url_for("home"))
+    session.permanent = True
+    session["ig_id"] = ig_id
+    session.pop("pending_accounts", None)
+    return redirect(url_for("home"))
 
 
 @app.post("/account")
 def choose_account():
     chosen = (request.form.get("ig_id") or "").strip()
-    allowed = session.get("ig_accounts") or []
-    if chosen not in allowed:
+    allowed = {item["id"] for item in (session.get("pending_accounts") or [])}
+    if chosen not in allowed or not token_store.get_account(chosen):
         flash("Choose one of the Instagram accounts on this login.")
         return redirect(url_for("home"))
+    session.permanent = True
     session["ig_id"] = chosen
+    session.pop("pending_accounts", None)
+    return redirect(url_for("home"))
+
+
+@app.post("/media/refresh")
+def refresh_media():
+    account = _open_account()
+    if not account:
+        return redirect(url_for("home"))
+    after = (request.form.get("after") or "").strip() or None
+    try:
+        _refresh_account(account, after=after)
+    except InstagramError as exc:
+        flash(str(exc))
     return redirect(url_for("home"))
 
 
@@ -128,14 +182,34 @@ def instagram_callback():
     if not accounts:
         flash(str(lookup_error or "Login finished, but the token has no Instagram account id."))
         return redirect(url_for("home"))
-    session["access_token"] = chosen_token
-    session["ig_accounts"] = accounts
-    session["ig_id"] = accounts[0] if len(accounts) == 1 else ""
+    token_store.save_login(
+        accounts,
+        chosen_token,
+        client_business_id(chosen_token),
+    )
+    session.permanent = True
     session.pop("oauth_state", None)
+    if len(accounts) == 1:
+        session["ig_id"] = accounts[0]["id"]
+        session.pop("pending_accounts", None)
+    else:
+        session.pop("ig_id", None)
+        session["pending_accounts"] = accounts
     return redirect(url_for("home"))
 
 
 @app.post("/logout")
 def logout():
-    session.clear()
+    session.pop("ig_id", None)
+    session.pop("pending_accounts", None)
+    return redirect(url_for("home"))
+
+
+@app.post("/forget")
+def forget():
+    ig_id = session.get("ig_id") or (request.form.get("ig_id") or "").strip()
+    if ig_id:
+        token_store.delete_account(ig_id)
+    if session.get("ig_id") == ig_id:
+        session.pop("ig_id", None)
     return redirect(url_for("home"))
