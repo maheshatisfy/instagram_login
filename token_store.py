@@ -72,6 +72,23 @@ def list_accounts():
     return [dict(row) for row in rows]
 
 
+def list_boards():
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM accounts
+            ORDER BY COALESCE(username, ig_id) COLLATE NOCASE
+            """
+        ).fetchall()
+    boards = []
+    for row in rows:
+        account = dict(row)
+        account["profile"] = json.loads(account["profile_json"] or "null")
+        account["media"] = json.loads(account["media_json"] or "null")
+        boards.append(account)
+    return boards
+
+
 def get_account(ig_id):
     with _connect() as connection:
         row = connection.execute(

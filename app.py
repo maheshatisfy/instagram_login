@@ -62,39 +62,32 @@ def _refresh_account(account, after=None):
     return saved
 
 
+def _boards():
+    boards = token_store.list_boards()
+    changed = False
+    for account in boards:
+        if account.get("profile") and account.get("media") is not None:
+            continue
+        try:
+            _refresh_account(account)
+            changed = True
+        except InstagramError as exc:
+            flash("@{}: {}".format(account.get("username") or account["ig_id"], exc))
+    if changed:
+        boards = token_store.list_boards()
+    return boards
+
+
 @app.get("/")
 def home():
     session.permanent = True
-    account = _open_account()
-    if not account:
-        pending = session.get("pending_accounts") or []
-        if len(pending) > 1:
-            return render_template("accounts.html", accounts=pending)
-        return render_template("login.html", saved=token_store.list_accounts())
-
-    profile = account.get("profile")
-    media = account.get("media")
-    media_error = account.get("media_error")
-    if not profile or media is None:
-        try:
-            account = _refresh_account(account)
-            profile = account.get("profile")
-            media = account.get("media") or []
-            media_error = account.get("media_error")
-        except InstagramError as exc:
-            flash(str(exc))
-            return render_template(
-                "login.html",
-                saved=token_store.list_accounts(),
-            )
-    return render_template(
-        "dashboard.html",
-        profile=profile or {},
-        media=media or [],
-        next_after=account.get("media_after"),
-        media_error=media_error,
-        saved_at=account.get("updated_at"),
-    )
+    pending = session.get("pending_accounts") or []
+    if len(pending) > 1 and not session.get("ig_id"):
+        return render_template("accounts.html", accounts=pending)
+    boards = _boards()
+    if not boards:
+        return render_template("login.html", saved=[])
+    return render_template("board.html", boards=boards)
 
 
 @app.post("/continue")
@@ -124,7 +117,8 @@ def choose_account():
 
 @app.post("/media/refresh")
 def refresh_media():
-    account = _open_account()
+    ig_id = (request.form.get("ig_id") or session.get("ig_id") or "").strip()
+    account = token_store.get_account(ig_id)
     if not account:
         return redirect(url_for("home"))
     after = (request.form.get("after") or "").strip() or None
@@ -189,12 +183,8 @@ def instagram_callback():
     )
     session.permanent = True
     session.pop("oauth_state", None)
-    if len(accounts) == 1:
-        session["ig_id"] = accounts[0]["id"]
-        session.pop("pending_accounts", None)
-    else:
-        session.pop("ig_id", None)
-        session["pending_accounts"] = accounts
+    session.pop("pending_accounts", None)
+    session["ig_id"] = accounts[0]["id"]
     return redirect(url_for("home"))
 
 
@@ -207,7 +197,7 @@ def logout():
 
 @app.post("/forget")
 def forget():
-    ig_id = session.get("ig_id") or (request.form.get("ig_id") or "").strip()
+    ig_id = (request.form.get("ig_id") or session.get("ig_id") or "").strip()
     if ig_id:
         token_store.delete_account(ig_id)
     if session.get("ig_id") == ig_id:

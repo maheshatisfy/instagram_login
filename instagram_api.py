@@ -9,6 +9,7 @@ system user, not the Instagram account. Account ids come from
     GET /v26.0/{ig-user-id}/media?fields=...,insights.metric(...)
 """
 
+import copy
 import os
 from urllib.parse import urlencode
 
@@ -226,7 +227,9 @@ def fetch_media(token, instagram_id, after=None, limit=10):
         payload = _request("GET", f"{base}{instagram_id}/media", token, params=params)
     items = []
     for media in payload.get("data") or []:
-        media["insights"] = _insight_rows(media.get("insights"))
+        raw = copy.deepcopy(media)
+        media["raw"] = raw
+        media["insights"] = _insight_rows(raw.get("insights"))
         media["insight_error"] = insight_error
         items.append(media)
     paging = payload.get("paging") or {}

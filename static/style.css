@@ -133,8 +133,10 @@ a { color: #9d174d; }
 
 .avatar.large { width: 84px; height: 84px; font-size: 1.6rem; }
 
+.influencer { margin: 28px 0 40px; }
 .profile, .card { padding: 18px; margin: 16px 0; }
-.profile { display: flex; gap: 16px; align-items: flex-start; }
+.profile { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 220px; }
 
 .profile img {
   width: 84px;
@@ -177,3 +179,19 @@ a { color: #9d174d; }
 
 .metric small, .metric strong { display: block; }
 .metric small { color: var(--muted); }
+
+.api-toggle { margin-top: 12px; }
+.api-toggle.open { background: var(--ink); color: white; border-color: var(--ink); }
+
+.api-response {
+  margin: 12px 0 0;
+  padding: 14px;
+  overflow: auto;
+  max-height: 420px;
+  border-radius: 12px;
+  background: #1c1917;
+  color: #f5f5f4;
+  font: 12px/1.45 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
