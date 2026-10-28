@@ -108,11 +108,30 @@ def instagram_callback():
         return redirect(url_for("home"))
     try:
         token = exchange_code(code)
-        accounts = instagram_account_ids(token["access_token"])
     except InstagramError as exc:
         flash(str(exc))
         return redirect(url_for("home"))
-    session["access_token"] = token["access_token"]
+    accounts = []
+    lookup_error = None
+    chosen_token = token["access_token"]
+    tried = set()
+    for candidate in (token["access_token"], token.get("short_token")):
+        if not candidate or candidate in tried:
+            continue
+        tried.add(candidate)
+        try:
+            accounts = instagram_account_ids(candidate)
+            chosen_token = candidate
+            break
+        except InstagramError as exc:
+            lookup_error = exc
+    if not accounts and token.get("user_id"):
+        accounts = [str(token["user_id"])]
+        chosen_token = token.get("short_token") or token["access_token"]
+    if not accounts:
+        flash(str(lookup_error or "Login finished, but the token has no Instagram account id."))
+        return redirect(url_for("home"))
+    session["access_token"] = chosen_token
     session["ig_accounts"] = accounts
     session["ig_id"] = accounts[0] if len(accounts) == 1 else ""
     session.pop("oauth_state", None)
