@@ -163,7 +163,7 @@ def instagram_callback():
     lookup_error = None
     chosen_token = token["access_token"]
     tried = set()
-    for candidate in (token["access_token"], token.get("short_token")):
+    for candidate in (token.get("short_token"), token["access_token"]):
         if not candidate or candidate in tried:
             continue
         tried.add(candidate)

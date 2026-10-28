@@ -30,6 +30,15 @@ MEDIA_FIELDS_WITHOUT_INSIGHTS = (
     "media_product_type,media_type,collaborators"
 )
 
+INSTAGRAM_SCOPES = {
+    "instagram_basic",
+    "instagram_manage_comments",
+    "instagram_manage_insights",
+    "instagram_content_publish",
+    "instagram_manage_messages",
+    "instagram_manage_events",
+}
+
 
 class InstagramError(Exception):
 
@@ -72,6 +81,7 @@ def authorize_url(state):
         "response_type": "code",
         "override_default_response_type": "true",
         "config_id": config_id,
+        "prompt": "login",
     })
     return f"https://www.facebook.com/{version}/dialog/oauth?{query}"
 
@@ -147,34 +157,158 @@ def exchange_code(code):
     }
 
 
+def _paged(token, url, params):
+    rows = []
+    while url:
+        payload = _request("GET", url, token, params=params)
+        rows.extend(payload.get("data") or [])
+        url = ((payload.get("paging") or {}).get("next"))
+        params = None
+    return rows
+
+
+def _remember(found, account_id, username=""):
+    account_id = str(account_id or "").strip()
+    if not account_id or account_id in {item["id"] for item in found}:
+        return
+    found.append({"id": account_id, "username": username or ""})
+
+
+def _assigned_accounts(token):
+    _, _, _, _, base = _config()
+    found = []
+    try:
+        rows = _paged(
+            token,
+            f"{base}me/assigned_instagram_accounts",
+            {"fields": "id,username", "limit": 100},
+        )
+    except InstagramError:
+        return found
+    for account in rows:
+        if isinstance(account, dict):
+            _remember(found, account.get("id"), account.get("username") or "")
+    return found
+
+
+def _debug_token(token):
+    app_id, app_secret, _, _, base = _config()
+    try:
+        payload = _request(
+            "GET",
+            f"{base}debug_token",
+            token="",
+            params={
+                "input_token": token,
+                "access_token": f"{app_id}|{app_secret}",
+            },
+        )
+    except InstagramError:
+        return {}
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def _readable_instagram_account(token, account_id, username=""):
+    """Confirm a candidate id is an Instagram professional account on graph.facebook.com."""
+    _, _, _, _, base = _config()
+    try:
+        profile = _request(
+            "GET",
+            f"{base}{account_id}",
+            token,
+            params={"fields": "id,username"},
+        )
+    except InstagramError:
+        return None
+    if not profile.get("username") and not username:
+        return None
+    return {
+        "id": str(profile.get("id") or account_id),
+        "username": profile.get("username") or username or "",
+    }
+
+
+def _accounts_from_token_targets(token, debug):
+    """Instagram ids Meta stored on the token when the assigned-accounts edge is empty."""
+    _, _, _, _, base = _config()
+    found = []
+    seen = []
+    for item in debug.get("granular_scopes") or []:
+        if not isinstance(item, dict) or item.get("scope") not in INSTAGRAM_SCOPES:
+            continue
+        for target in item.get("target_ids") or []:
+            target = str(target).strip()
+            if target and target not in seen:
+                seen.append(target)
+    for account_id in seen:
+        account = _readable_instagram_account(token, account_id)
+        if account:
+            _remember(found, account["id"], account["username"])
+    if found:
+        return found
+    business_id = None
+    try:
+        me = _request(
+            "GET",
+            f"{base}me",
+            token,
+            params={"fields": "client_business_id"},
+        )
+        business_id = me.get("client_business_id")
+    except InstagramError:
+        business_id = None
+    if not business_id:
+        return found
+    for edge in ("owned_instagram_assets", "client_instagram_assets"):
+        try:
+            rows = _paged(
+                token,
+                f"{base}{business_id}/{edge}",
+                {"fields": "id,username", "limit": 100},
+            )
+        except InstagramError:
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            account = _readable_instagram_account(
+                token,
+                row.get("id"),
+                row.get("username") or "",
+            )
+            if account:
+                _remember(found, account["id"], account["username"])
+    return found
+
+
 def instagram_account_ids(token):
     """Instagram professional account ids shared with this Unified Login token.
 
     /me is the business integration system user and has no user_id.
     https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started
     """
-    _, _, _, _, base = _config()
-    found = []
-    url = f"{base}me/assigned_instagram_accounts"
-    params = {"fields": "id,username", "limit": 100}
-    while url:
-        payload = _request("GET", url, token, params=params)
-        for account in payload.get("data") or []:
-            account_id = str((account or {}).get("id") or "").strip()
-            if account_id and account_id not in {item["id"] for item in found}:
-                found.append({
-                    "id": account_id,
-                    "username": (account or {}).get("username") or "",
-                })
-        url = (payload.get("paging") or {}).get("next")
-        params = None
+    found = _assigned_accounts(token)
+    debug = {}
     if not found:
-        raise InstagramError(
-            "Login finished, but the token has no Instagram account id. "
-            "/me/assigned_instagram_accounts returned no account. "
-            "In the login dialog, share an Instagram professional account."
-        )
-    return found
+        debug = _debug_token(token)
+        found = _accounts_from_token_targets(token, debug)
+    if found:
+        return found
+    if not debug:
+        debug = _debug_token(token)
+    scopes = debug.get("scopes") or []
+    scope_text = ", ".join(str(scope) for scope in scopes) if scopes else "none"
+    target_count = 0
+    for item in debug.get("granular_scopes") or []:
+        if isinstance(item, dict) and item.get("scope") in INSTAGRAM_SCOPES:
+            target_count += len(item.get("target_ids") or [])
+    raise InstagramError(
+        "Login finished, but no Instagram professional account was shared. "
+        f"Scopes: {scope_text}. Instagram accounts on the token: {target_count}. "
+        "In the Meta dialog, open the account switcher, log in with Instagram, "
+        "select the business portfolio, select the Instagram professional account, and confirm."
+    )
 
 
 def client_business_id(token):
