@@ -1,8 +1,11 @@
-"""Instagram Login (graph.instagram.com) helpers.
+"""Instagram API with Unified Login.
 
-Facebook Page login stays on graph.facebook.com. This module is the
-Instagram Login path: authorize on instagram.com, exchange the code,
-then call graph.instagram.com with the user token.
+Login uses Facebook Login for Business (config id). Data calls use
+graph.facebook.com and the Instagram professional account id, the same
+shape as:
+
+    GET /v26.0/{ig-user-id}?fields=followers_count,follows_count,...
+    GET /v26.0/{ig-user-id}/media?fields=...,insights.metric(...)
 """
 
 import os
@@ -10,59 +13,20 @@ from urllib.parse import urlencode
 
 import requests
 
-AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize"
-TOKEN_URL = "https://api.instagram.com/oauth/access_token"
-LONG_LIVED_URL = "https://graph.instagram.com/access_token"
+PROFILE_FIELDS = "followers_count,follows_count,username,biography,profile_picture_url"
 
-SCOPES = "instagram_business_basic,instagram_business_manage_insights"
+MEDIA_FIELDS = (
+    "id,caption,timestamp,permalink,comments_count,like_count,"
+    "media_product_type,media_type,collaborators,"
+    "insights.metric(total_interactions,saved,reach,shares,views,total_views,"
+    "total_likes,total_comments,reposts,reels_skip_rate,crossposted_views,"
+    "facebook_views).fields(name,values)"
+)
 
-PROFILE_FIELDS = ",".join([
-    "user_id",
-    "username",
-    "name",
-    "biography",
-    "profile_picture_url",
-    "followers_count",
-    "follows_count",
-    "account_type",
-])
-
-MEDIA_FIELDS = ",".join([
-    "id",
-    "caption",
-    "timestamp",
-    "permalink",
-    "comments_count",
-    "like_count",
-    "media_product_type",
-    "media_type",
-    "collaborators",
-])
-
-INSIGHT_METRICS = ",".join([
-    "total_interactions",
-    "saved",
-    "reach",
-    "shares",
-    "views",
-    "total_views",
-    "total_likes",
-    "total_comments",
-    "reposts",
-    "reels_skip_rate",
-    "crossposted_views",
-    "facebook_views",
-])
-
-FALLBACK_METRICS = ",".join([
-    "total_interactions",
-    "saved",
-    "reach",
-    "shares",
-    "views",
-    "likes",
-    "comments",
-])
+MEDIA_FIELDS_WITHOUT_INSIGHTS = (
+    "id,caption,timestamp,permalink,comments_count,like_count,"
+    "media_product_type,media_type,collaborators"
+)
 
 
 class InstagramError(Exception):
@@ -74,35 +38,40 @@ class InstagramError(Exception):
 
 
 def _config():
-    app_id = (os.getenv("INSTAGRAM_APP_ID") or "").strip()
-    app_secret = (os.getenv("INSTAGRAM_APP_SECRET") or "").strip()
+    app_id = (os.getenv("META_APP_ID") or os.getenv("INSTAGRAM_APP_ID") or "").strip()
+    app_secret = (os.getenv("META_APP_SECRET") or os.getenv("INSTAGRAM_APP_SECRET") or "").strip()
     redirect_uri = (os.getenv("REDIRECT_URI") or "").strip()
+    config_id = (os.getenv("FACEBOOK_LOGIN_CONFIG_ID") or "").strip()
     version = (os.getenv("GRAPH_VERSION") or "v26.0").strip()
     missing = [
         name for name, value in (
-            ("INSTAGRAM_APP_ID", app_id),
-            ("INSTAGRAM_APP_SECRET", app_secret),
+            ("META_APP_ID", app_id),
+            ("META_APP_SECRET", app_secret),
             ("REDIRECT_URI", redirect_uri),
+            ("FACEBOOK_LOGIN_CONFIG_ID", config_id),
         ) if not value
     ]
     if missing:
         raise InstagramError("Missing " + ", ".join(missing))
-    base = f"https://graph.instagram.com/{version}/"
-    return app_id, app_secret, redirect_uri, base
+    if not redirect_uri.lower().startswith("https://"):
+        raise InstagramError(
+            "REDIRECT_URI must start with https://. Facebook blocks this app on http."
+        )
+    return app_id, app_secret, redirect_uri, config_id, f"https://graph.facebook.com/{version}/"
 
 
 def authorize_url(state):
-    app_id, _, redirect_uri, _ = _config()
+    app_id, _, redirect_uri, config_id, _ = _config()
+    version = (os.getenv("GRAPH_VERSION") or "v26.0").strip()
     query = urlencode({
         "client_id": app_id,
         "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": SCOPES,
         "state": state,
-        "enable_fb_login": "0",
-        "force_authentication": "1",
+        "response_type": "code",
+        "override_default_response_type": "true",
+        "config_id": config_id,
     })
-    return f"{AUTHORIZE_URL}?{query}"
+    return f"https://www.facebook.com/{version}/dialog/oauth?{query}"
 
 
 def _error_message(payload, status_code):
@@ -111,15 +80,20 @@ def _error_message(payload, status_code):
         if isinstance(error, dict) and error.get("message"):
             return error["message"]
         if payload.get("error_message"):
-            return payload["error_message"]
-    return f"Instagram returned HTTP {status_code}"
+            return str(payload["error_message"])
+    return f"Graph API returned HTTP {status_code}"
 
 
-def _get(url, token, params=None):
-    response = requests.get(
+def _request(method, url, token, params=None, data=None):
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    response = requests.request(
+        method,
         url,
         params=params or {},
-        headers={"Authorization": f"Bearer {token}"},
+        data=data,
+        headers=headers,
         timeout=45,
     )
     try:
@@ -133,122 +107,119 @@ def _get(url, token, params=None):
 
 
 def exchange_code(code):
-    """Short-lived code exchange, then a 60-day token."""
-    app_id, app_secret, redirect_uri, _ = _config()
+    """Authorization code to a long-lived Facebook user or system-user token."""
+    app_id, app_secret, redirect_uri, _, base = _config()
     code = (code or "").split("#")[0].strip()
-    response = requests.post(
-        TOKEN_URL,
-        data={
+    short = _request(
+        "GET",
+        f"{base}oauth/access_token",
+        token="",
+        params={
             "client_id": app_id,
             "client_secret": app_secret,
-            "grant_type": "authorization_code",
             "redirect_uri": redirect_uri,
             "code": code,
         },
-        timeout=45,
     )
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {}
-    if response.status_code != 200:
-        raise InstagramError(_error_message(payload, response.status_code),
-                             response.status_code, payload)
-
-    token = payload.get("access_token")
-    user_id = payload.get("user_id")
-    data = payload.get("data")
-    if not token and isinstance(data, list) and data:
-        token = data[0].get("access_token")
-        user_id = data[0].get("user_id")
+    token = short.get("access_token")
     if not token:
-        raise InstagramError("Token response had no access_token",
-                             response.status_code, payload)
-
-    long_lived = requests.get(
-        LONG_LIVED_URL,
-        params={
-            "grant_type": "ig_exchange_token",
-            "client_secret": app_secret,
-            "access_token": token,
-        },
-        timeout=45,
-    )
+        raise InstagramError("Token response had no access_token", payload=short)
     try:
-        long_payload = long_lived.json()
-    except ValueError:
-        long_payload = {}
-    if long_lived.status_code == 200 and long_payload.get("access_token"):
-        return {
-            "access_token": long_payload["access_token"],
-            "user_id": str(user_id or ""),
-            "expires_in": long_payload.get("expires_in"),
-        }
+        long_lived = _request(
+            "GET",
+            f"{base}oauth/access_token",
+            token="",
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "fb_exchange_token": token,
+            },
+        )
+    except InstagramError:
+        long_lived = short
     return {
-        "access_token": token,
-        "user_id": str(user_id or ""),
-        "expires_in": None,
+        "access_token": long_lived.get("access_token") or token,
+        "expires_in": long_lived.get("expires_in"),
     }
 
 
-def fetch_profile(token):
-    _, _, _, base = _config()
-    return _get(f"{base}me", token, {"fields": PROFILE_FIELDS})
+def instagram_account_ids(token):
+    """Instagram professional account ids granted on this unified-login token."""
+    app_id, app_secret, _, _, base = _config()
+    found = []
+
+    def add(value):
+        text = str(value or "").strip()
+        if text and text not in found:
+            found.append(text)
+
+    debug = _request(
+        "GET",
+        f"{base}debug_token",
+        token=f"{app_id}|{app_secret}",
+        params={"input_token": token},
+    )
+    for scope in (debug.get("data") or {}).get("granular_scopes") or []:
+        for target in scope.get("target_ids") or []:
+            add(target)
+
+    try:
+        pages = _request(
+            "GET",
+            f"{base}me/accounts",
+            token,
+            params={"fields": "instagram_business_account{id,username}"},
+        )
+        for page in pages.get("data") or []:
+            account = page.get("instagram_business_account") or {}
+            add(account.get("id"))
+    except InstagramError:
+        pass
+    return found
 
 
-def _insight_rows(payload):
+def fetch_profile(token, instagram_id):
+    _, _, _, _, base = _config()
+    profile = _request(
+        "GET",
+        f"{base}{instagram_id}",
+        token,
+        params={"fields": PROFILE_FIELDS},
+    )
+    profile["id"] = str(profile.get("id") or instagram_id)
+    return profile
+
+
+def _insight_rows(insights):
     rows = []
-    for item in (payload or {}).get("data") or []:
+    for item in (insights or {}).get("data") or []:
         values = item.get("values") or []
         value = values[0].get("value") if values else None
         rows.append({"name": item.get("name"), "value": value})
     return rows
 
 
-def _insights(token, base, media_id, metrics):
-    return _get(
-        f"{base}{media_id}/insights",
-        token,
-        {"metric": metrics},
-    )
-
-
-def _media_page(token, base, user_id, after, limit):
+def fetch_media(token, instagram_id, after=None, limit=10):
+    _, _, _, _, base = _config()
     params = {"fields": MEDIA_FIELDS, "limit": limit}
     if after:
         params["after"] = after
+    insight_error = None
     try:
-        return _get(f"{base}{user_id}/media", token, params)
-    except InstagramError:
-        basic = ",".join(part for part in MEDIA_FIELDS.split(",") if part != "collaborators")
-        params["fields"] = basic
-        return _get(f"{base}{user_id}/media", token, params)
-
-
-def fetch_media(token, user_id, after=None, limit=10):
-    _, _, _, base = _config()
-    payload = _media_page(token, base, user_id, after, limit)
+        payload = _request("GET", f"{base}{instagram_id}/media", token, params=params)
+    except InstagramError as exc:
+        insight_error = exc.args[0]
+        params["fields"] = MEDIA_FIELDS_WITHOUT_INSIGHTS
+        payload = _request("GET", f"{base}{instagram_id}/media", token, params=params)
     items = []
     for media in payload.get("data") or []:
-        media_id = media.get("id")
-        insight_error = None
-        insights = []
-        if media_id:
-            try:
-                insights = _insight_rows(
-                    _insights(token, base, media_id, INSIGHT_METRICS))
-            except InstagramError as exc:
-                try:
-                    insights = _insight_rows(
-                        _insights(token, base, media_id, FALLBACK_METRICS))
-                    insight_error = exc.args[0]
-                except InstagramError as fallback_exc:
-                    insight_error = fallback_exc.args[0]
-        media["insights"] = insights
+        media["insights"] = _insight_rows(media.get("insights"))
         media["insight_error"] = insight_error
         items.append(media)
-    cursors = (payload.get("paging") or {}).get("cursors") or {}
+    paging = payload.get("paging") or {}
+    cursors = paging.get("cursors") or {}
     return {
         "items": items,
-        "after": cursors.get("after") if (payload.get("paging") or {}).get("next") else None,
+        "after": cursors.get("after") if paging.get("next") else None,
     }

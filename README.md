@@ -1,17 +1,16 @@
-# Instagram Login viewer
+# Instagram API with Unified Login
 
-Small Flask app for the Instagram Login flow (`graph.instagram.com`). After login it shows the profile and a page of media with insights. It is meant to run on PythonAnywhere.
+Small Flask app for Instagram API with Unified Login. Login is Facebook Login for Business (`config_id`). Profile and media are read from `graph.facebook.com/v26.0/{instagram-user-id}`, including media insights in the same request.
 
 Do not commit `.env`. Do not paste access tokens into source files.
 
 ## Meta app setup
 
-1. In the Meta app, add the Instagram product and use **Instagram Login** (not Facebook Login).
-2. Add this redirect URI, exactly as `REDIRECT_URI` in `.env`:
+1. Use a Business Meta app with **Facebook Login for Business** and a login configuration whose token type can access the Instagram professional account (Unified Login). Copy that configuration id into `FACEBOOK_LOGIN_CONFIG_ID`.
+2. The configuration needs `instagram_basic` and `instagram_manage_insights`.
+3. Add this redirect URI, exactly as `REDIRECT_URI` in `.env`, under Facebook Login for Business → Settings → Valid OAuth Redirect URIs:
 
    `https://YOUR_USERNAME.pythonanywhere.com/instagram/callback`
-
-3. The Instagram account must be a professional account. The login asks for `instagram_business_basic` and `instagram_business_manage_insights`.
 
 ## PythonAnywhere
 
@@ -25,7 +24,7 @@ Do not commit `.env`. Do not paste access tokens into source files.
    pip install -r requirements.txt
    ```
 
-3. Copy `.env.example` to `.env` and fill in `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `REDIRECT_URI`, and a long `SECRET_KEY`. Set `COOKIE_SECURE=1`.
+3. Copy `.env.example` to `.env` and fill in `META_APP_ID`, `META_APP_SECRET`, `FACEBOOK_LOGIN_CONFIG_ID`, `REDIRECT_URI`, and a long `SECRET_KEY`. Set `COOKIE_SECURE=1`.
 4. Web tab → Add a new web app → Manual configuration → Python 3.10 (or the version you used for the virtualenv).
 5. Virtualenv path: `/home/YOUR_USERNAME/instagram_login/venv`
 6. WSGI configuration file, replace the file contents with:
@@ -47,13 +46,14 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
-python app.py
+flask --app app run --debug --cert=adhoc
 ```
 
-`app.py` does not start a server by itself. For local use:
+Open `https://lvh.me:5000` and accept the browser certificate warning. `lvh.me` points at this machine, and Facebook App Domains accepts it. A raw IP such as `127.0.0.1` cannot be added there.
 
-```bash
-flask --app app run --debug
-```
+In the Meta app:
 
-Set `REDIRECT_URI=http://127.0.0.1:5000/instagram/callback` and `COOKIE_SECURE=0` for that local URL, and add the same URI on the Meta app.
+- Settings → Basic → App Domains: `lvh.me`
+- Facebook Login for Business → Settings → Valid OAuth Redirect URIs: `https://lvh.me:5000/instagram/callback`
+
+`REDIRECT_URI` must be that same https address, and `COOKIE_SECURE=1`. Facebook rejects an `http://` redirect with “isn't using a secure connection”.

@@ -12,7 +12,14 @@ from flask import (
     url_for,
 )
 
-from instagram_api import InstagramError, authorize_url, exchange_code, fetch_media, fetch_profile
+from instagram_api import (
+    InstagramError,
+    authorize_url,
+    exchange_code,
+    fetch_media,
+    fetch_profile,
+    instagram_account_ids,
+)
 
 load_dotenv()
 
@@ -31,21 +38,29 @@ def _token():
 def home():
     if not _token():
         return render_template("login.html")
+    ig_id = session.get("ig_id")
+    accounts = session.get("ig_accounts") or []
+    if not ig_id:
+        if len(accounts) > 1:
+            return render_template("accounts.html", accounts=accounts)
+        if len(accounts) == 1:
+            ig_id = accounts[0]
+            session["ig_id"] = ig_id
+        else:
+            flash("Login finished, but the token has no Instagram account id.")
+            return render_template("login.html")
     try:
-        profile = fetch_profile(_token())
+        profile = fetch_profile(_token(), ig_id)
     except InstagramError as exc:
         flash(str(exc))
         return render_template("login.html")
-    user_id = str(profile.get("user_id") or profile.get("id") or session.get("user_id") or "")
-    session["user_id"] = user_id
     after = (request.args.get("after") or "").strip() or None
     media = {"items": [], "after": None}
     media_error = None
-    if user_id:
-        try:
-            media = fetch_media(_token(), user_id, after=after)
-        except InstagramError as exc:
-            media_error = str(exc)
+    try:
+        media = fetch_media(_token(), ig_id, after=after)
+    except InstagramError as exc:
+        media_error = str(exc)
     return render_template(
         "dashboard.html",
         profile=profile,
@@ -53,6 +68,17 @@ def home():
         next_after=media["after"],
         media_error=media_error,
     )
+
+
+@app.post("/account")
+def choose_account():
+    chosen = (request.form.get("ig_id") or "").strip()
+    allowed = session.get("ig_accounts") or []
+    if chosen not in allowed:
+        flash("Choose one of the Instagram accounts on this login.")
+        return redirect(url_for("home"))
+    session["ig_id"] = chosen
+    return redirect(url_for("home"))
 
 
 @app.get("/instagram/login")
@@ -78,15 +104,17 @@ def instagram_callback():
         return redirect(url_for("home"))
     code = request.args.get("code")
     if not code:
-        flash("Instagram did not return a code.")
+        flash("Meta did not return a code.")
         return redirect(url_for("home"))
     try:
         token = exchange_code(code)
+        accounts = instagram_account_ids(token["access_token"])
     except InstagramError as exc:
         flash(str(exc))
         return redirect(url_for("home"))
     session["access_token"] = token["access_token"]
-    session["user_id"] = token.get("user_id") or ""
+    session["ig_accounts"] = accounts
+    session["ig_id"] = accounts[0] if len(accounts) == 1 else ""
     session.pop("oauth_state", None)
     return redirect(url_for("home"))
 

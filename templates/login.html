@@ -8,14 +8,14 @@
 </head>
 <body>
   <main class="wrap narrow">
-    <h1>Instagram Login</h1>
-    <p class="muted">Connect with Instagram, then view the profile and media insights.</p>
+    <h1>Instagram API with Unified Login</h1>
+    <p class="muted">Log in with Instagram or Facebook. The app then reads the professional account on graph.facebook.com.</p>
     {% with messages = get_flashed_messages() %}
       {% for message in messages %}
         <p class="error">{{ message }}</p>
       {% endfor %}
     {% endwith %}
-    <a class="button" href="{{ url_for('instagram_login') }}">Continue with Instagram</a>
+    <a class="button" href="{{ url_for('instagram_login') }}">Continue with Unified Login</a>
   </main>
 </body>
 </html>
