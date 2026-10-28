@@ -1,8 +1,8 @@
 """Instagram API with Unified Login.
 
-Login uses Facebook Login for Business (config id). Data calls use
-graph.facebook.com and the Instagram professional account id, the same
-shape as:
+Login uses Facebook Login for Business (config id). A Unified Login
+token without a Facebook Page carries the Instagram professional account
+id as user_id. Data calls try graph.instagram.com, then graph.facebook.com:
 
     GET /v26.0/{ig-user-id}?fields=followers_count,follows_count,...
     GET /v26.0/{ig-user-id}/media?fields=...,insights.metric(...)
@@ -144,9 +144,30 @@ def exchange_code(code):
     }
 
 
+def _user_id(payload):
+    """Instagram professional account id. Not the app-scoped id field."""
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("user_id"):
+        return payload.get("user_id")
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data.get("user_id")
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and item.get("user_id"):
+                return item.get("user_id")
+    return None
+
+
 def instagram_account_ids(token):
-    """Instagram professional account ids granted on this unified-login token."""
+    """Instagram professional account ids granted on this unified-login token.
+
+    Page-linked logins expose the id on a Page or on a scope target.
+    Unified Login without a Page exposes it as user_id on /me.
+    """
     app_id, app_secret, _, _, base = _config()
+    version = (os.getenv("GRAPH_VERSION") or "v26.0").strip()
     found = []
 
     def add(value):
@@ -160,9 +181,31 @@ def instagram_account_ids(token):
         token=f"{app_id}|{app_secret}",
         params={"input_token": token},
     )
-    for scope in (debug.get("data") or {}).get("granular_scopes") or []:
+    debug_data = debug.get("data") or {}
+    scopes = debug_data.get("granular_scopes") or []
+    for scope in scopes:
         for target in scope.get("target_ids") or []:
             add(target)
+
+    for url in (
+        f"https://graph.instagram.com/{version}/me",
+        f"{base}me",
+    ):
+        try:
+            me = _request(
+                "GET",
+                url,
+                token,
+                params={"fields": "user_id,username"},
+            )
+        except InstagramError:
+            continue
+        add(_user_id(me))
+
+    if not found and any(
+            str(scope.get("scope") or "").startswith("instagram_business_")
+            for scope in scopes):
+        add(debug_data.get("user_id"))
 
     try:
         pages = _request(
@@ -179,15 +222,26 @@ def instagram_account_ids(token):
     return found
 
 
+def _get_user_node(token, path, params):
+    """Unified Login tokens are served by graph.instagram.com. Page-linked tokens stay on graph.facebook.com."""
+    _, _, _, _, facebook = _config()
+    version = (os.getenv("GRAPH_VERSION") or "v26.0").strip()
+    last_error = None
+    for base in (f"https://graph.instagram.com/{version}/", facebook):
+        try:
+            return _request("GET", f"{base}{path}", token, params=params)
+        except InstagramError as exc:
+            last_error = exc
+    raise last_error
+
+
 def fetch_profile(token, instagram_id):
-    _, _, _, _, base = _config()
-    profile = _request(
-        "GET",
-        f"{base}{instagram_id}",
+    profile = _get_user_node(
         token,
-        params={"fields": PROFILE_FIELDS},
+        instagram_id,
+        {"fields": PROFILE_FIELDS},
     )
-    profile["id"] = str(profile.get("id") or instagram_id)
+    profile["id"] = str(profile.get("user_id") or profile.get("id") or instagram_id)
     return profile
 
 
@@ -201,17 +255,16 @@ def _insight_rows(insights):
 
 
 def fetch_media(token, instagram_id, after=None, limit=10):
-    _, _, _, _, base = _config()
     params = {"fields": MEDIA_FIELDS, "limit": limit}
     if after:
         params["after"] = after
     insight_error = None
     try:
-        payload = _request("GET", f"{base}{instagram_id}/media", token, params=params)
+        payload = _get_user_node(token, f"{instagram_id}/media", params)
     except InstagramError as exc:
         insight_error = exc.args[0]
         params["fields"] = MEDIA_FIELDS_WITHOUT_INSIGHTS
-        payload = _request("GET", f"{base}{instagram_id}/media", token, params=params)
+        payload = _get_user_node(token, f"{instagram_id}/media", params)
     items = []
     for media in payload.get("data") or []:
         media["insights"] = _insight_rows(media.get("insights"))
