@@ -125,9 +125,6 @@ def instagram_callback():
             break
         except InstagramError as exc:
             lookup_error = exc
-    if not accounts and token.get("user_id"):
-        accounts = [str(token["user_id"])]
-        chosen_token = token.get("short_token") or token["access_token"]
     if not accounts:
         flash(str(lookup_error or "Login finished, but the token has no Instagram account id."))
         return redirect(url_for("home"))

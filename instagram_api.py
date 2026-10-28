@@ -1,9 +1,9 @@
 """Instagram API with Unified Login.
 
 Login uses Facebook Login for Business (config id). Every data call
-uses https://graph.facebook.com/v26.0/. A Unified Login token without a
-Facebook Page carries the Instagram professional account id as user_id
-on /me.
+uses https://graph.facebook.com/v26.0/. /me is the business integration
+system user, not the Instagram account. Account ids come from
+/me/assigned_instagram_accounts.
 
     GET /v26.0/{ig-user-id}?fields=followers_count,follows_count,...
     GET /v26.0/{ig-user-id}/media?fields=...,insights.metric(...)
@@ -142,95 +142,33 @@ def exchange_code(code):
     return {
         "access_token": long_lived.get("access_token") or token,
         "short_token": token,
-        "user_id": _user_id(short) or _user_id(long_lived),
         "expires_in": long_lived.get("expires_in"),
     }
 
 
-def _user_id(payload):
-    """Instagram professional account id. Not the app-scoped id field."""
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("user_id"):
-        return payload.get("user_id")
-    data = payload.get("data")
-    if isinstance(data, dict):
-        return data.get("user_id")
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict) and item.get("user_id"):
-                return item.get("user_id")
-    return None
-
-
 def instagram_account_ids(token):
-    """Instagram professional account ids on a graph.facebook.com unified-login token.
+    """Instagram professional account ids shared with this Unified Login token.
 
-    Without a Page, the id is user_id on /v26.0/me. Page-linked logins still
-    expose it on a scope target or on the Page's instagram_business_account.
+    /me is the business integration system user and has no user_id.
+    https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started
     """
-    app_id, app_secret, _, _, base = _config()
+    _, _, _, _, base = _config()
     found = []
-    notes = []
-
-    def add(value):
-        text = str(value or "").strip()
-        if text and text not in found:
-            found.append(text)
-
-    debug = _request(
-        "GET",
-        f"{base}debug_token",
-        token=f"{app_id}|{app_secret}",
-        params={"input_token": token},
-    )
-    debug_data = debug.get("data") or {}
-    scopes = debug_data.get("granular_scopes") or []
-    scope_names = []
-    for scope in scopes:
-        name = str(scope.get("scope") or "")
-        if name:
-            scope_names.append(name)
-        targets = scope.get("target_ids") or []
-        if isinstance(targets, str):
-            targets = [targets]
-        for target in targets:
-            add(target)
-    if not scope_names:
-        scope_names = [str(name) for name in (debug_data.get("scopes") or [])]
-
-    try:
-        me = _request(
-            "GET",
-            f"{base}me",
-            token,
-            params={"fields": "user_id,username,id"},
-        )
-        add(_user_id(me))
-        if not found and me.get("username") and me.get("id"):
-            add(me.get("id"))
-    except InstagramError as exc:
-        notes.append(f"/me: {exc}")
-
-    try:
-        pages = _request(
-            "GET",
-            f"{base}me/accounts",
-            token,
-            params={"fields": "instagram_business_account{id,username}"},
-        )
-        for page in pages.get("data") or []:
-            account = page.get("instagram_business_account") or {}
-            add(account.get("id"))
-    except InstagramError as exc:
-        notes.append(f"me/accounts: {exc}")
-
+    url = f"{base}me/assigned_instagram_accounts"
+    params = {"fields": "id,username", "limit": 100}
+    while url:
+        payload = _request("GET", url, token, params=params)
+        for account in payload.get("data") or []:
+            account_id = str((account or {}).get("id") or "").strip()
+            if account_id and account_id not in found:
+                found.append(account_id)
+        url = (payload.get("paging") or {}).get("next")
+        params = None
     if not found:
-        detail = "; ".join(notes) or "no user_id on /me"
-        scopes_text = ", ".join(scope_names) or "none"
         raise InstagramError(
-            f"Login finished, but the token has no Instagram account id. "
-            f"Scopes: {scopes_text}. {detail}"
+            "Login finished, but the token has no Instagram account id. "
+            "/me/assigned_instagram_accounts returned no account. "
+            "In the login dialog, share an Instagram professional account."
         )
     return found
 
