@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>@{{ profile.username or "Instagram" }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <h1>Connected account</h1>
+      <form method="post" action="{{ url_for('logout') }}">
+        <button type="submit" class="ghost">Log out</button>
+      </form>
+    </header>
+
+    {% with messages = get_flashed_messages() %}
+      {% for message in messages %}
+        <p class="error">{{ message }}</p>
+      {% endfor %}
+    {% endwith %}
+
+    <section class="profile">
+      {% if profile.profile_picture_url %}
+        <img src="{{ profile.profile_picture_url }}" alt="">
+      {% endif %}
+      <div>
+        <h2>@{{ profile.username }}</h2>
+        {% if profile.name %}<p>{{ profile.name }}</p>{% endif %}
+        {% if profile.biography %}<p class="bio">{{ profile.biography }}</p>{% endif %}
+        <p class="stats">
+          <span>{{ profile.followers_count if profile.followers_count is not none else "—" }} followers</span>
+          <span>{{ profile.follows_count if profile.follows_count is not none else "—" }} following</span>
+          {% if profile.account_type %}<span>{{ profile.account_type }}</span>{% endif %}
+        </p>
+        <p class="muted">Instagram user id {{ profile.user_id or profile.id }}</p>
+      </div>
+    </section>
+
+    <h2>Media</h2>
+    {% if media_error %}
+      <p class="error">{{ media_error }}</p>
+    {% endif %}
+    {% if not media and not media_error %}
+      <p class="muted">No media returned.</p>
+    {% endif %}
+
+    {% for item in media %}
+      <article class="card">
+        <p class="meta">
+          <span>{{ item.media_product_type }} · {{ item.media_type }}</span>
+          <span>{{ item.timestamp }}</span>
+        </p>
+        {% if item.caption %}<p>{{ item.caption }}</p>{% endif %}
+        <p>
+          <a href="{{ item.permalink }}" target="_blank" rel="noopener">Open post</a>
+          · {{ item.like_count if item.like_count is not none else "—" }} likes
+          · {{ item.comments_count if item.comments_count is not none else "—" }} comments
+        </p>
+        {% if item.collaborators and item.collaborators.data %}
+          <p class="muted">
+            Collaborators:
+            {% for person in item.collaborators.data %}
+              @{{ person.username }} ({{ person.invite_status }}){% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </p>
+        {% endif %}
+        {% if item.insights %}
+          <table>
+            <thead>
+              <tr><th>Metric</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+              {% for row in item.insights %}
+                <tr><td>{{ row.name }}</td><td>{{ row.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+        {% if item.insight_error %}
+          <p class="muted">Some insight metrics were skipped: {{ item.insight_error }}</p>
+        {% endif %}
+      </article>
+    {% endfor %}
+
+    {% if next_after %}
+      <p><a class="button" href="{{ url_for('home', after=next_after) }}">Next page</a></p>
+    {% endif %}
+  </main>
+</body>
+</html>
