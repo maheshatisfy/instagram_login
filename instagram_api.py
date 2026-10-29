@@ -18,7 +18,7 @@ import requests
 PROFILE_FIELDS = "followers_count,follows_count,username,biography,profile_picture_url"
 
 MEDIA_FIELDS = (
-    "id,caption,timestamp,permalink,comments_count,like_count,"
+    "id,caption,timestamp,permalink,media_url,thumbnail_url,comments_count,like_count,"
     "media_product_type,media_type,collaborators,"
     "insights.metric(total_interactions,saved,reach,shares,views,total_views,"
     "total_likes,total_comments,reposts,reels_skip_rate,crossposted_views,"
@@ -26,7 +26,7 @@ MEDIA_FIELDS = (
 )
 
 MEDIA_FIELDS_WITHOUT_INSIGHTS = (
-    "id,caption,timestamp,permalink,comments_count,like_count,"
+    "id,caption,timestamp,permalink,media_url,thumbnail_url,comments_count,like_count,"
     "media_product_type,media_type,collaborators"
 )
 

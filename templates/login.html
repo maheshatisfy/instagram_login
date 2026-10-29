@@ -1,24 +1,42 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Instagram Login</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-  <main class="wrap narrow">
-    <section class="panel">
-      <p class="eyebrow">Unified Login</p>
-      <h1>Open a saved account, or connect a new one.</h1>
-      <p class="muted">The access token stays on this server. You only sign in with Meta again when that token expires or you remove the account.</p>
-      {% with messages = get_flashed_messages() %}
-        {% for message in messages %}
-          <p class="error">{{ message }}</p>
+{% extends "base.html" %}
+{% block title %}Log in · Influencer Connect{% endblock %}
+{% block body %}
+<div class="login-page">
+  <div class="login-showcase">
+    <div class="showcase-card">
+      <h2>Connect every creator in one place</h2>
+      <p>Link multiple Instagram professional accounts with Meta Unified Login. Tokens stay on your server—creators only authorize once.</p>
+      <ul class="feature-list">
+        <li>
+          <span class="feature-icon">+</span>
+          <span><strong>Add influencers anytime</strong> — each login can share several accounts; connect again for more portfolios.</span>
+        </li>
+        <li>
+          <span class="feature-icon">◎</span>
+          <span><strong>Profiles &amp; media</strong> — followers, posts, and insights in an Instagram-style hub.</span>
+        </li>
+        <li>
+          <span class="feature-icon">🔒</span>
+          <span><strong>Secure storage</strong> — access tokens are saved locally until you remove an account.</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="login-stack">
+    <section class="login-card">
+      {% include "partials/logo.html" %}
+      <h1>Sign in to connect</h1>
+      <p class="lead">Use Meta Unified Login with your Instagram professional account.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <p class="{{ 'success' if category == 'success' else 'error' }}">{{ message }}</p>
         {% endfor %}
       {% endwith %}
+
       {% if saved %}
-        <h2>Saved accounts</h2>
+        <p class="lead" style="margin-top:0">Resume a saved account</p>
         <ul class="account-list">
           {% for account in saved %}
             <li>
@@ -28,21 +46,23 @@
                   <span class="avatar">{{ (account.username or account.ig_id)[:1]|upper }}</span>
                   <span>
                     <strong>@{{ account.username or account.ig_id }}</strong>
-                    <small>Saved {{ account.updated_at }}</small>
+                    <small>Updated {{ account.updated_at }}</small>
                   </span>
                 </button>
-              </form>
-              <form method="post" action="{{ url_for('forget') }}">
-                <input type="hidden" name="ig_id" value="{{ account.ig_id }}">
-                <button type="submit" class="text-button">Remove</button>
               </form>
             </li>
           {% endfor %}
         </ul>
+        <p class="muted" style="font-size:0.85rem;margin-bottom:16px">or connect a new account</p>
       {% endif %}
-      <a class="button" href="{{ url_for('instagram_login') }}">Connect with Unified Login</a>
-      <p class="muted">In the Meta window, log in with Instagram, pick the business portfolio, select the professional account, and confirm. Skipping that step connects no account.</p>
+
+      <a class="button instagram" href="{{ url_for('instagram_login') }}">Continue with Instagram</a>
+      <p class="hint">In the Meta window, log in with Instagram, choose the business portfolio, select the professional account, and confirm.</p>
     </section>
-  </main>
-</body>
-</html>
+
+    <section class="login-card-secondary">
+      <strong>Multiple influencers?</strong> Complete login for each creator or select every account shared in one Meta session.
+    </section>
+  </div>
+</div>
+{% endblock %}

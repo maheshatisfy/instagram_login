@@ -1,82 +1,120 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Connected influencers</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-  <main class="wrap">
-    <header class="top">
-      <div>
-        <p class="eyebrow">{{ boards|length }} saved account{% if boards|length != 1 %}s{% endif %}</p>
-        <h1>Connected influencers</h1>
-      </div>
-      <div class="actions">
-        <a class="button" href="{{ url_for('instagram_login') }}">Connect another account</a>
-        <p class="muted">Log in with Instagram and select the professional account in the Meta window.</p>
-      </div>
-    </header>
+{% extends "base.html" %}
+{% block title %}Connected influencers{% endblock %}
+{% block body %}
+<div class="hub">
+  <header class="site-header">
+    <div>
+      {% include "partials/logo.html" %}
+      <p class="header-meta">{{ boards|length }} connected influencer{% if boards|length != 1 %}s{% endif %}</p>
+    </div>
+    <div class="header-actions">
+      <a class="button small" href="{{ url_for('instagram_login') }}">Add account</a>
+    </div>
+  </header>
 
-    {% with messages = get_flashed_messages() %}
-      {% for message in messages %}
-        <p class="error">{{ message }}</p>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <p class="{{ 'success' if category == 'success' else 'error' }}">{{ message }}</p>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="influencer-rail-wrap">
+    <nav class="influencer-rail" aria-label="Connected accounts">
+      {% for account in boards %}
+        {% set profile = account.profile or {} %}
+        {% set uname = profile.username or account.username or account.ig_id %}
+        <a class="rail-item" href="#creator-{{ account.ig_id }}">
+          <span class="rail-ring">
+            {% if profile.profile_picture_url %}
+              <img src="{{ profile.profile_picture_url }}" alt="@{{ uname }}">
+            {% else %}
+              <span class="avatar">{{ uname[:1]|upper }}</span>
+            {% endif %}
+          </span>
+          <span class="rail-name">@{{ uname }}</span>
+        </a>
       {% endfor %}
-    {% endwith %}
+      <a class="rail-item add" href="{{ url_for('instagram_login') }}" title="Connect another account">
+        <span class="rail-ring">+</span>
+        <span class="rail-name">Add</span>
+      </a>
+    </nav>
+  </div>
 
-    {% for account in boards %}
-      {% set profile = account.profile or {} %}
-      <section class="influencer">
-        <div class="profile">
+  {% for account in boards %}
+    {% set profile = account.profile or {} %}
+    {% set uname = profile.username or account.username or account.ig_id %}
+    <section id="creator-{{ account.ig_id }}" class="influencer-panel">
+      <div class="profile-header">
+        <div class="profile-avatar-wrap">
           {% if profile.profile_picture_url %}
-            <img src="{{ profile.profile_picture_url }}" alt="">
+            <img src="{{ profile.profile_picture_url }}" alt="@{{ uname }}">
           {% else %}
-            <span class="avatar large">{{ (profile.username or account.username or "I")[:1]|upper }}</span>
+            <span class="avatar large">{{ uname[:1]|upper }}</span>
           {% endif %}
-          <div class="grow">
-            <h2>@{{ profile.username or account.username or account.ig_id }}</h2>
-            {% if profile.biography %}<p class="bio">{{ profile.biography }}</p>{% endif %}
-            <p class="stats">
-              <span><strong>{{ profile.followers_count if profile.followers_count is not none else "—" }}</strong> followers</span>
-              <span><strong>{{ profile.follows_count if profile.follows_count is not none else "—" }}</strong> following</span>
-            </p>
-            <p class="muted">Instagram id {{ profile.user_id or profile.id or account.ig_id }} · last loaded {{ account.updated_at }}</p>
-          </div>
-          <div class="actions">
+        </div>
+        <div class="profile-main">
+          <div class="profile-title-row">
+            <h2>{{ uname }}</h2>
             <form method="post" action="{{ url_for('refresh_media') }}">
               <input type="hidden" name="ig_id" value="{{ account.ig_id }}">
-              <button type="submit">Refresh media</button>
+              <button type="submit" class="ghost small">Refresh</button>
             </form>
             <form method="post" action="{{ url_for('forget') }}">
               <input type="hidden" name="ig_id" value="{{ account.ig_id }}">
-              <button type="submit" class="text-button">Remove token</button>
+              <button type="submit" class="text-button">Disconnect</button>
             </form>
           </div>
+          <ul class="profile-stats">
+            <li><strong>{{ (account.media or [])|length }}</strong> posts loaded</li>
+            <li><strong>{{ profile.followers_count if profile.followers_count is not none else "—" }}</strong> followers</li>
+            <li><strong>{{ profile.follows_count if profile.follows_count is not none else "—" }}</strong> following</li>
+          </ul>
+          {% if profile.biography %}<p class="bio">{{ profile.biography }}</p>{% endif %}
+          <p class="muted">ID {{ profile.user_id or profile.id or account.ig_id }} · {{ account.updated_at }}</p>
         </div>
+      </div>
 
-        <div class="section-head">
-          <h2>Media</h2>
+      <div class="media-tabs">
+        <span class="active">Posts</span>
+      </div>
+
+      {% if account.media_error %}
+        <p class="error" style="margin:16px 24px">{{ account.media_error }}</p>
+      {% endif %}
+
+      {% if not account.media and not account.media_error %}
+        <p class="empty-media">No media yet. Tap <strong>Refresh</strong> to load posts from Instagram.</p>
+      {% else %}
+        <div class="media-grid">
+          {% for item in account.media or [] %}
+            {% set thumb = item.thumbnail_url or item.media_url %}
+            <button type="button" class="media-tile" data-detail="detail-{{ account.ig_id }}-{{ loop.index }}" aria-label="View post">
+              {% if thumb %}
+                <img src="{{ thumb }}" alt="" loading="lazy">
+              {% else %}
+                <span class="media-tile-placeholder">{{ item.media_type or "Post" }}</span>
+              {% endif %}
+              <span class="media-tile-overlay">
+                <span>♥ {{ item.like_count if item.like_count is not none else "—" }}</span>
+                <span>💬 {{ item.comments_count if item.comments_count is not none else "—" }}</span>
+              </span>
+            </button>
+          {% endfor %}
         </div>
-        {% if account.media_error %}
-          <p class="error">{{ account.media_error }}</p>
-        {% endif %}
-        {% if not account.media and not account.media_error %}
-          <p class="muted">No media saved yet.</p>
-        {% endif %}
 
         {% for item in account.media or [] %}
-          <article class="card">
+          <div id="detail-{{ account.ig_id }}-{{ loop.index }}" class="media-detail">
             <p class="meta">
-              <span class="pill">{{ item.media_product_type }} · {{ item.media_type }}</span>
+              <span class="pill">{{ item.media_product_type or "FEED" }} · {{ item.media_type or "MEDIA" }}</span>
               <span>{{ item.timestamp }}</span>
             </p>
-            {% if item.caption %}<p>{{ item.caption }}</p>{% endif %}
-            <p class="stats">
-              <span><strong>{{ item.like_count if item.like_count is not none else "—" }}</strong> likes</span>
-              <span><strong>{{ item.comments_count if item.comments_count is not none else "—" }}</strong> comments</span>
+            {% if item.caption %}<p class="caption">{{ item.caption }}</p>{% endif %}
+            <p class="muted">
+              <strong>{{ item.like_count if item.like_count is not none else "—" }}</strong> likes ·
+              <strong>{{ item.comments_count if item.comments_count is not none else "—" }}</strong> comments
               {% if item.permalink %}
-                <a href="{{ item.permalink }}" target="_blank" rel="noopener">Open post</a>
+                · <a href="{{ item.permalink }}" target="_blank" rel="noopener">View on Instagram</a>
               {% endif %}
             </p>
             {% if item.insights %}
@@ -87,32 +125,49 @@
               </div>
             {% endif %}
             {% if item.insight_error %}
-              <p class="muted">Some insight metrics were skipped: {{ item.insight_error }}</p>
+              <p class="muted">Some metrics skipped: {{ item.insight_error }}</p>
             {% endif %}
-            <button type="button" class="ghost api-toggle">api-response</button>
+            <button type="button" class="ghost api-toggle small">Raw API response</button>
             <pre class="api-response" hidden>{{ (item.raw or item)|tojson(indent=2) }}</pre>
-          </article>
+          </div>
         {% endfor %}
 
         {% if account.media_after %}
-          <form method="post" action="{{ url_for('refresh_media') }}">
-            <input type="hidden" name="ig_id" value="{{ account.ig_id }}">
-            <input type="hidden" name="after" value="{{ account.media_after }}">
-            <button type="submit" class="ghost">Load next page</button>
-          </form>
+          <div class="load-more-wrap">
+            <form method="post" action="{{ url_for('refresh_media') }}">
+              <input type="hidden" name="ig_id" value="{{ account.ig_id }}">
+              <input type="hidden" name="after" value="{{ account.media_after }}">
+              <button type="submit" class="ghost">Load more posts</button>
+            </form>
+          </div>
         {% endif %}
-      </section>
-    {% endfor %}
-  </main>
-  <script>
-    document.querySelectorAll(".api-toggle").forEach(function (button) {
-      button.addEventListener("click", function () {
-        var block = button.nextElementSibling;
-        var open = block.hidden;
-        block.hidden = !open;
-        button.classList.toggle("open", open);
+      {% endif %}
+    </section>
+  {% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.querySelectorAll(".media-tile").forEach(function (tile) {
+    tile.addEventListener("click", function () {
+      var id = tile.getAttribute("data-detail");
+      var panel = document.getElementById(id);
+      if (!panel) return;
+      var open = panel.classList.contains("open");
+      tile.closest(".influencer-panel").querySelectorAll(".media-detail.open").forEach(function (el) {
+        el.classList.remove("open");
       });
+      if (!open) panel.classList.add("open");
+      if (!open) panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
-  </script>
-</body>
-</html>
+  });
+  document.querySelectorAll(".api-toggle").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var block = button.nextElementSibling;
+      var show = block.hidden;
+      block.hidden = !show;
+      button.classList.toggle("open", show);
+    });
+  });
+</script>
+{% endblock %}

@@ -86,7 +86,7 @@ def home():
         return render_template("accounts.html", accounts=pending)
     boards = _boards()
     if not boards:
-        return render_template("login.html", saved=[])
+        return render_template("login.html", saved=token_store.list_accounts())
     return render_template("board.html", boards=boards)
 
 
@@ -184,7 +184,12 @@ def instagram_callback():
     session.permanent = True
     session.pop("oauth_state", None)
     session.pop("pending_accounts", None)
-    session["ig_id"] = accounts[0]["id"]
+    if len(accounts) == 1:
+        session["ig_id"] = accounts[0]["id"]
+    else:
+        session.pop("ig_id", None)
+        names = ", ".join("@" + (a.get("username") or a["id"]) for a in accounts)
+        flash("Connected {} accounts: {}.".format(len(accounts), names), "success")
     return redirect(url_for("home"))
 
 

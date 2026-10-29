@@ -1,34 +1,33 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Choose account</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-  <main class="wrap narrow">
-    <section class="panel">
-      <p class="eyebrow">One token, several accounts</p>
-      <h1>Choose an Instagram account</h1>
-      <p class="muted">These accounts were shared in this login. The same token is already saved for each of them.</p>
-      <ul class="account-list">
-        {% for account in accounts %}
-          <li>
-            <form method="post" action="{{ url_for('choose_account') }}">
-              <input type="hidden" name="ig_id" value="{{ account.id }}">
-              <button type="submit" class="account-button">
-                <span class="avatar">{{ (account.username or account.id)[:1]|upper }}</span>
-                <span>
-                  <strong>@{{ account.username or account.id }}</strong>
-                  <small>{{ account.id }}</small>
-                </span>
-              </button>
-            </form>
-          </li>
-        {% endfor %}
-      </ul>
-    </section>
-  </main>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}Choose account{% endblock %}
+{% block body %}
+<div class="account-picker">
+  <section class="login-card">
+    {% include "partials/logo.html" %}
+    <h1>Choose an account</h1>
+    <p class="lead">This login shared several Instagram accounts. Pick one to open—the rest stay saved on the server.</p>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <p class="{{ 'success' if category == 'success' else 'error' }}">{{ message }}</p>
+      {% endfor %}
+    {% endwith %}
+    <ul class="account-list">
+      {% for account in accounts %}
+        <li>
+          <form method="post" action="{{ url_for('choose_account') }}">
+            <input type="hidden" name="ig_id" value="{{ account.id }}">
+            <button type="submit" class="account-button">
+              <span class="avatar">{{ (account.username or account.id)[:1]|upper }}</span>
+              <span>
+                <strong>@{{ account.username or account.id }}</strong>
+                <small>{{ account.id }}</small>
+              </span>
+            </button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+    <a class="button instagram" href="{{ url_for('home') }}">View all connected</a>
+  </section>
+</div>
+{% endblock %}
